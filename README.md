@@ -23,20 +23,18 @@ plugin, i.e. the plugin writes response headers and body.
 ## Getting Started
 
 ```
-{
-  http_port     9080
-  https_port    9443
-}
-
-localhost:9080 {
-  route /api/foo {
-    lambda {
-      runtime python
-      script_path assets/scripts/api/hello_world.py
-    }
-  }
-  route {
-    respond "OK"
-  }
+localhost {
+	route /api/* {
+		lambda {
+			name hello_world
+			runtime python
+			python_executable {$HOME}/path/to/venv/bin/python
+			entrypoint assets/scripts/api/hello_world/app/index.py
+			function handler
+		}
+	}
+	route {
+		respond "OK"
+	}
 }
 ```
