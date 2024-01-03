@@ -1,0 +1,5 @@
+requests
+routes==2.5.1
+aws-lambda-powertools
+aws-lambda-typing
+aws-xray-sdk

@@ -4,6 +4,8 @@ bin/**
 .doc/**
 *TODO*
 123*
+venv/*
+__pycache__/
 
 # Binaries for programs and plugins
 #
