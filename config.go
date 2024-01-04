@@ -15,14 +15,20 @@
 package lambda
 
 import (
+	"strconv"
+
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"go.uber.org/zap"
 )
 
+const (
+	pluginName = "lambda"
+)
+
 func init() {
-	httpcaddyfile.RegisterHandlerDirective("lambda", parseCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective(pluginName, parseCaddyfile)
 }
 
 // parseCaddyfile sets up a handler for function execution
@@ -38,6 +44,22 @@ func ensureArgsCount(d *caddyfile.Dispenser, args []string, count int) error {
 		return d.Errf("too many args %q, expected %d", args, count)
 	}
 	return nil
+}
+
+func ensureArgUint(d *caddyfile.Dispenser, name, arg string) (uint, error) {
+	n, err := strconv.Atoi(arg)
+    if err != nil {
+		return 0, d.Errf("failed to convert %s %s: %v", name, arg, err)
+    }
+	ns := strconv.Itoa(n)
+	if ns != arg {
+		return 0, d.Errf("failed to convert %s %s, resolved %s", name, arg, ns)
+	}
+	if n < 0 {
+		return 0, d.Errf("%s %s must be greater or equal to zero", name, arg)
+	}
+
+	return uint(n), nil
 }
 
 // UnmarshalCaddyfile sets up the handler from Caddyfile tokens. Syntax:
@@ -92,8 +114,19 @@ func (fex *FunctionExecutor) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return err
 				}				
 				fex.EntrypointHandler = args[0]
+			case "workers":
+				args = d.RemainingArgs()
+				err := ensureArgsCount(d, args, 1)
+				if err != nil {
+					return err
+				}
+				count, err := ensureArgUint(d, "workers", args[0])
+				if err != nil {
+					return err
+				}
+				fex.MaxWorkersCount = count
 			default:
-				return d.Errf("unrecognized subdirective %q", d.Val())
+				return d.Errf("unsupported %s directive %q", pluginName, d.Val())
 			}
 		}
 	}
@@ -112,6 +145,9 @@ func (fex *FunctionExecutor) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		if fex.PythonExecutable == "" {
 			fex.PythonExecutable = "python"
 		}
+		if fex.MaxWorkersCount == 0 {
+			fex.MaxWorkersCount = 1
+		}
 		fex.logger.Debug(
 			"configured lambda function",
 			zap.String("name", fex.Name),
@@ -119,6 +155,7 @@ func (fex *FunctionExecutor) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			zap.String("python_executable", fex.PythonExecutable),
 			zap.String("entrypoint", fex.EntrypointPath),
 			zap.String("function", fex.EntrypointHandler),
+			zap.Uint("workers", fex.MaxWorkersCount),
 		)
 	default:
 		return d.Errf("lambda runtime is not set")

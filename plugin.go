@@ -15,11 +15,11 @@
 package lambda
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"regexp"
+	"strings"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -44,13 +44,18 @@ type FunctionExecutor struct {
 	EntrypointHandler string `json:"entrypoint_handler,omitempty"`
 	// PythonExecutable stores the path to the python executable.
 	PythonExecutable string `json:"python_executable,omitempty"`
+	// MaxWorkersCount stores the max number of concurrent runtimes.
+	MaxWorkersCount uint `json:"workers,omitempty"`
+	// WorkerTimeout stores the maximum number of seconds a function would run.
+	WorkerTimeout int `json:"worker_timeout,omitempty"`
 	// If URIFilter is not empty, then only the plugin
 	// intercepts only the pages matching the regular expression
 	// in the filter
-	URIFilter        string `json:"uri_filter,omitempty"`
-	filterURIPattern *regexp.Regexp
-	logger           *zap.Logger
-	cmd				*exec.Cmd
+	URIFilter         string `json:"uri_filter,omitempty"`
+	filterURIPattern  *regexp.Regexp
+	logger            *zap.Logger
+	workers           []*worker
+	entrypointImport string
 }
 
 // CaddyModule returns the Caddy module information.
@@ -63,7 +68,6 @@ func (FunctionExecutor) CaddyModule() caddy.ModuleInfo {
 
 // Provision sets up FunctionExecutor.
 func (fex *FunctionExecutor) Provision(ctx caddy.Context) error {
-	// fex.logger = ctx.Logger(fex)
 	if fex.logger == nil {
 		fex.logger = initLogger(zapcore.InfoLevel)
 	}
@@ -76,23 +80,32 @@ func (fex *FunctionExecutor) Provision(ctx caddy.Context) error {
 		fex.filterURIPattern = p
 	}
 
-	// Run server
-	var stdin, stdout, stderr bytes.Buffer
-	cmd := exec.Command(fex.PythonExecutable)
-	cmd.Stdin = &stdin
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Start()
-	if err != nil {
-		return fmt.Errorf("failed starting lambda %s: %s", fex.Name, err)
+	if fex.entrypointImport == "" {
+		fex.entrypointImport = strings.ReplaceAll(fex.EntrypointPath, "/", ".")
+		if strings.HasSuffix(fex.entrypointImport, ".py") {
+			fex.entrypointImport = fex.entrypointImport[:len(fex.entrypointImport)-3]
+		}
 	}
 
+	var workerID uint = 0
+	if fex.WorkerTimeout < 1 {
+		fex.WorkerTimeout = 60
+	}
+	timeout := time.Second * time.Duration(fex.WorkerTimeout)
+
+	w, err := newWorker(workerID, fex.PythonExecutable, []string{"-u", "-q", "-i"}, timeout, fex.logger)
+	if err != nil {
+		return fmt.Errorf("failed starting lambda worker %d %s: %s", workerID, fex.Name, err)
+	}
+	fex.workers = append(fex.workers, w)
+
 	fex.logger.Info(
-		"started lambda runtime", 
+		"started lambda runtime",
 		zap.String("lambda_name", fex.Name),
-		zap.Int("pid", cmd.Process.Pid),
+		zap.Uint("worker_id", workerID),
+		zap.Int("worker_pid", w.getProcessPid()),
+		zap.Int("worker_timeout", fex.WorkerTimeout),
 	)
-	fex.cmd = cmd
 	return nil
 }
 
@@ -100,48 +113,35 @@ func (fex FunctionExecutor) ServeHTTP(resp http.ResponseWriter, req *http.Reques
 	return fex.invoke(resp, req)
 }
 
-// Cleanup implements caddy.CleanerUpper and terminates running processes. 
+// Cleanup implements caddy.CleanerUpper and terminates running processes.
 func (fex *FunctionExecutor) Cleanup() error {
-	if fex.cmd == nil {
-		return nil
-	}
-	if fex.cmd.Process == nil {
-		return nil
-	}
-
 	fex.logger.Info(
-		"cleaning up lambda plugin", 
+		"cleaning up plugin",
+		zap.String("plugin_name", pluginName),
 		zap.String("lambda_name", fex.Name),
-		zap.Int("pid", fex.cmd.Process.Pid),
 	)
 
-	err := fex.cmd.Process.Kill()
-	fex.logger.Info(
-		"shutting down lambda runtime", 
-		zap.String("lambda_name", fex.Name),
-		zap.Error(err),
-	)
-	if err != nil {
-		return err
-	}
-	err = fex.cmd.Wait()
-
-	if err == nil {
-		return err
-	}
-	if err.Error() == "signal: killed" {
+	for _, w := range fex.workers {
+		if err := w.terminate(); err != nil {
+			fex.logger.Warn(
+				"failed shutting down lambda runtime",
+				zap.String("plugin_name", pluginName),
+				zap.String("lambda_name", fex.Name),
+				zap.Uint("worker_id", w.ID),
+				zap.Int("worker_pid", w.Pid),
+				zap.Error(err),
+			)
+			continue
+		}
 		fex.logger.Info(
-			"completed shutdown of lambda runtime", 
+			"completed shutdown of lambda runtime",
+			zap.String("plugin_name", pluginName),
 			zap.String("lambda_name", fex.Name),
+			zap.Uint("worker_id", w.ID),
+			zap.Int("worker_pid", w.Pid),
 		)
-		return nil
 	}
-	fex.logger.Info(
-		"completed shutdown of lambda runtime", 
-		zap.String("lambda_name", fex.Name),
-		zap.Error(err),
-	)
-	return err
+	return nil
 }
 
 // Interface guard

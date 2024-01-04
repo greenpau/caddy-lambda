@@ -23,6 +23,7 @@ all:
 		--with github.com/greenpau/caddy-lambda@$(LATEST_GIT_COMMIT)=$(BUILD_DIR)
 	@bin/caddy fmt --overwrite assets/conf/api/Caddyfile
 	@#bin/caddy validate --config assets/conf/api/Caddyfile
+	@#bin/caddy run --config assets/conf/api/Caddyfile
 
 .PHONY: linter
 linter:
@@ -63,7 +64,8 @@ clean:
 .PHONY: qtest
 qtest: covdir
 	@echo "Perform quick tests ..."
-	@go test $(VERBOSE) -coverprofile=.coverage/coverage.out -run TestParseCaddyfile ./*.go
+	@#go test $(VERBOSE) -coverprofile=.coverage/coverage.out -run TestParseCaddyfile ./*.go
+	@go test $(VERBOSE) -coverprofile=.coverage/coverage.out -run TestFunctionExecutor ./*.go
 
 .PHONY: dep
 dep:

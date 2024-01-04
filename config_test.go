@@ -38,6 +38,7 @@ func TestParseCaddyfile(t *testing.T) {
 					python_executable {$HOME}/dev/go/src/github.com/greenpau/caddy-lambda/venv/bin/python
 			  		entrypoint assets/scripts/api/hello_world/app/index.py
 					function handler
+					workers 1
 				}`),
 			want: `{
 			    "foo": "bar"

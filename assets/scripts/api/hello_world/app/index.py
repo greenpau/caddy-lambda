@@ -14,9 +14,10 @@
 
 import json
 
-def handler(event: dict):
+def handler(event: dict) -> dict:
+    print(f"event: {event}")
     response = {
-        "body": "hello world!",
+        "body": json.dumps({"message": "hello world!", "event": event}),
         "status_code": 200,
     }
-    print(json.dumps(response))
+    return response

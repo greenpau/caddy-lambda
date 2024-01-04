@@ -16,6 +16,7 @@ package lambda
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/google/uuid"
@@ -70,22 +71,49 @@ func (fex *FunctionExecutor) invoke(resp http.ResponseWriter, req *http.Request)
 		"invoked lambda function",
 		zap.String("lambda_name", fex.Name),
 		zap.String("request_id", requestID),
-		zap.String("method", req.Method),
-		zap.String("proto", req.Proto),
-		zap.String("host", req.Host),
-		zap.String("uri", req.RequestURI),
-		zap.String("remote_addr_port", req.RemoteAddr),
-		zap.Int64("content_length", req.ContentLength),
-		zap.Int("cookie_count", len(cookies)),
-		zap.String("user_agent", req.UserAgent()),
-		zap.String("referer", req.Referer()),
-		zap.Any("cookies", cookies),
-		zap.Any("query_params", queryParams),
-		zap.Any("headers", reqHeaders),
 	)
 
-	resp.WriteHeader(200)
-	resp.Write([]byte(`FOO`))
+	data := make(map[string]interface{})
+	data["request_id"] = requestID
+	data["method"] = req.Method
+	data["path"] = req.URL.Path
+	data["proto"] = req.Proto
+	data["host"] = req.Host
+	data["request_uri"] = req.RequestURI
+	data["remote_addr_port"] = req.RemoteAddr
+	data["cookies"] = cookies
+	data["headers"] = reqHeaders
+	data["query_params"] = queryParams
 
+	statusCode, body, err := fex.execWorker(data)
+	if err != nil {
+		resp.WriteHeader(http.StatusInternalServerError)
+		resp.Write([]byte(http.StatusText(http.StatusInternalServerError)))
+		return nil
+	}
+
+	resp.WriteHeader(statusCode)
+	resp.Write(body)
 	return nil
+}
+
+func (fex *FunctionExecutor) execWorker(data map[string]interface{}) (int, []byte, error) {
+	availableWorkers := 0
+	for {
+		for _, w := range fex.workers {
+			if w.Terminated {
+				continue
+			}
+			if w.InUse {
+				availableWorkers++
+				continue
+			}
+			return w.handle(fex.entrypointImport, fex.EntrypointHandler, data)
+		}
+		if availableWorkers < 1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return http.StatusServiceUnavailable, []byte(http.StatusText(http.StatusServiceUnavailable)), nil
 }

@@ -15,30 +15,52 @@
 package lambda
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 func TestFunctionExecutor(t *testing.T) {
+	config := `
+	lambda {
+		name hello_world
+		runtime python
+		# python_executable {$HOME}/dev/go/src/github.com/greenpau/caddy-lambda/venv/bin/python
+		python_executable python
+		entrypoint assets/scripts/api/hello_world/app/index.py
+		function handler
+		workers 10
+	}`
 	for i, tc := range []struct {
 		req *http.Request
-		resp http.ResponseWriter
 		fex   FunctionExecutor
 	}{
 		{
 			fex:   FunctionExecutor{
 				Name: "foo",
 			},
-			resp: newResponseWriter(),
 			req: newRequest(t, "GET", "/"),
 		},
 	} {
+		d := caddyfile.NewTestDispenser(config)
 		tc.fex.logger = initLogger(zapcore.DebugLevel)
-		err := tc.fex.invoke(tc.resp, tc.req)
+		resp := newResponseWriter(tc.fex.logger)
+		if err := tc.fex.UnmarshalCaddyfile(d); err != nil {
+			t.Fatalf("unexpected UnmarshalCaddyfile() error: %v", err)
+		}
+		ctx := caddy.Context{Context: context.Background()}
+		if err := tc.fex.Provision(ctx); err != nil {
+			t.Fatalf("unexpected Provision() error: %v", err)
+		}
+		defer tc.fex.Cleanup()
+		err := tc.fex.invoke(resp, tc.req)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("unexpected invoke() error: %v", err)
 		}
 		t.Logf("PASS: Test %d", i)
 	}
@@ -57,11 +79,13 @@ type responseWriter struct {
 	body       []byte
 	statusCode int
 	header     http.Header
+	logger		*zap.Logger
 }
 
-func newResponseWriter() *responseWriter {
+func newResponseWriter(logger *zap.Logger) *responseWriter {
 	return &responseWriter{
 		header: http.Header{},
+		logger: logger,
 	}
 }
 
@@ -70,10 +94,12 @@ func (w *responseWriter) Header() http.Header {
 }
 
 func (w *responseWriter) Write(b []byte) (int, error) {
+	w.logger.Debug("wrote response body", zap.ByteString("body", b))
 	w.body = b
 	return 0, nil
 }
 
 func (w *responseWriter) WriteHeader(statusCode int) {
 	w.statusCode = statusCode
+	w.logger.Debug("wrote response header", zap.Int("status_code", statusCode))
 }

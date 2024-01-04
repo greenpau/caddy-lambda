@@ -22,6 +22,8 @@ plugin, i.e. the plugin writes response headers and body.
 
 ## Getting Started
 
+The `Caddyfile` config follows:
+
 ```
 localhost {
 	route /api/* {
@@ -38,3 +40,21 @@ localhost {
 	}
 }
 ```
+
+The `assets/scripts/api/hello_world/app/index.py` follows:
+
+```py
+import json
+
+def handler(event: dict) -> dict:
+    print(f"event: {event}")
+    response = {
+        "body": json.dumps({"message": "hello world!"}),
+        "status_code": 200,
+    }
+    return response
+```
+
+The `response` dictionary is mandatory for a handler. he `status_code` and `body` are
+mandatory fields of the `response`. The plugin writes `status_code` and `body` back to
+the requestor.

@@ -1,14 +1,16 @@
 {
+	debug
 	http_port 9080
 	https_port 9443
 }
 
-localhost:9080 {
+localhost {
 	route /api/* {
 		lambda {
 			name hello_world
 			runtime python
-			python_executable {$HOME}/dev/go/src/github.com/greenpau/caddy-lambda/venv/bin/python
+			# python_executable {$HOME}/dev/go/src/github.com/greenpau/caddy-lambda/venv/bin/python
+			python_executable python
 			entrypoint assets/scripts/api/hello_world/app/index.py
 			function handler
 		}
