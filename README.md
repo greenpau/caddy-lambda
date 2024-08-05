@@ -55,6 +55,6 @@ def handler(event: dict) -> dict:
     return response
 ```
 
-The `response` dictionary is mandatory for a handler. he `status_code` and `body` are
+The `response` dictionary is mandatory for a handler. The `status_code` and `body` are
 mandatory fields of the `response`. The plugin writes `status_code` and `body` back to
 the requestor.
